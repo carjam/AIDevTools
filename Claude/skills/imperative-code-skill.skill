@@ -1,0 +1,721 @@
+---
+name: imperative-code
+description: Generate high-quality imperative code following software engineering best practices including Law of Demeter, immutability-by-default, design patterns, strict typing, DAG (Directed Acyclic Graph) data flow architecture, and cognitive load minimization. Use when writing or refactoring imperative/object-oriented code in languages like Java, C#, C++, Python (OOP style), TypeScript classes, or similar paradigms where code quality, maintainability, and architectural clarity are paramount.
+---
+
+# Imperative Code Generation
+
+## Core Philosophy
+
+**MINIMIZE COGNITIVE LOAD** - This is the overarching principle that guides all other decisions. Every design choice should make the code easier to understand, reason about, and maintain.
+
+## Fundamental Principles
+
+### 1. Encapsulation & Information Hiding
+
+**Law of Demeter (Principle of Least Knowledge)**
+- Objects should only interact with immediate neighbors, not reach through multiple levels
+- Methods should call: methods of its own class, methods on objects passed as parameters, methods on objects it creates, methods on its fields
+- Never chain multiple method calls: `object.getX().getY().doSomething()` ❌
+- Instead, delegate: `object.performAction()` ✅
+
+**Visibility Defaults**
+- All methods, fields, and classes default to `private`
+- Only expose what is absolutely necessary for the interface contract
+- Promote to `protected` or `public` only when inheritance or external access is required
+- Document why non-private visibility is justified
+
+**Example:**
+```java
+// Bad - Law of Demeter violation
+public class OrderProcessor {
+    public void process(Order order) {
+        double tax = order.getCustomer().getAddress().getState().getTaxRate();
+        // Reaches through multiple objects
+    }
+}
+
+// Good - Tell, Don't Ask
+public class OrderProcessor {
+    public void process(Order order) {
+        double tax = order.calculateApplicableTax();
+        // Order encapsulates tax calculation logic
+    }
+}
+
+class Order {
+    private Customer customer;
+    
+    private double calculateApplicableTax() {
+        return customer.getTaxRate(); // Customer knows how to get tax rate
+    }
+}
+```
+
+### 2. Constructor & Parameter Design
+
+**Minimize Constructors**
+- Provide only the minimum number of constructors necessary
+- Prefer builder pattern when >3 parameters or optional parameters exist
+- Required dependencies go in constructor; optional configuration via setters (only when necessary) or builder
+
+**Minimize Parameters**
+- Methods should have the fewest parameters possible (ideally ≤3)
+- Pass the most specific data needed, not entire objects
+- Refactor: `processPayment(order.getAmount(), order.getCurrency())` ✅ not `processPayment(order)` when only amount/currency needed
+- Exception: When multiple fields are conceptually grouped and frequently passed together, use a value object
+
+**Example:**
+```java
+// Bad - Too many parameters, passing entire objects
+public void sendNotification(User user, Order order, Settings settings) {
+    String email = user.getEmail();
+    String message = order.getSummary();
+    boolean enabled = settings.isNotificationEnabled();
+    // ...
+}
+
+// Good - Pass only what's needed
+public void sendNotification(String recipientEmail, String message, boolean enabled) {
+    // ...
+}
+
+// Good - Builder for complex construction
+public class EmailNotification {
+    private final String recipient;
+    private final String subject;
+    private final String body;
+    private final Priority priority;
+    private final boolean htmlEnabled;
+    
+    private EmailNotification(Builder builder) {
+        this.recipient = requireNonNull(builder.recipient);
+        this.subject = requireNonNull(builder.subject);
+        this.body = requireNonNull(builder.body);
+        this.priority = builder.priority;
+        this.htmlEnabled = builder.htmlEnabled;
+    }
+    
+    public static class Builder {
+        private String recipient;
+        private String subject;
+        private String body;
+        private Priority priority = Priority.NORMAL;
+        private boolean htmlEnabled = false;
+        
+        public Builder recipient(String val) { recipient = val; return this; }
+        public Builder subject(String val) { subject = val; return this; }
+        public Builder body(String val) { body = val; return this; }
+        public Builder priority(Priority val) { priority = val; return this; }
+        public Builder htmlEnabled(boolean val) { htmlEnabled = val; return this; }
+        public EmailNotification build() { return new EmailNotification(this); }
+    }
+}
+```
+
+### 3. Mutability & State Management
+
+**Default to Immutable**
+- Variables, fields, and objects should be immutable unless mutation is necessary
+- Use `final` (Java), `const` (C++), `readonly` (C#), or language-appropriate immutability markers
+- Only make mutable when post-construction modification is required
+- Clearly document why mutability is necessary
+
+**No Setters by Default**
+- Mutators (setters) should not exist unless there's a clear business need
+- Prefer immutable objects with new instances for changes
+- If setters are required, document why and consider builder pattern instead
+
+**Example:**
+```java
+// Good - Immutable value object
+public final class Money {
+    private final BigDecimal amount;
+    private final Currency currency;
+    
+    public Money(BigDecimal amount, Currency currency) {
+        this.amount = requireNonNull(amount);
+        this.currency = requireNonNull(currency);
+    }
+    
+    public Money add(Money other) {
+        validateCurrency(other);
+        return new Money(amount.add(other.amount), currency);
+    }
+    
+    // Getters only, no setters
+    public BigDecimal getAmount() { return amount; }
+    public Currency getCurrency() { return currency; }
+}
+```
+
+### 4. Modularity & Single Responsibility
+
+**Black Box Principle**
+- Each method should be a black box: given inputs → produces outputs
+- No side effects unless explicitly part of the method's contract
+- Method names should indicate if side effects occur: `calculateTotal()` vs `updateInventoryAndCalculateTotal()`
+
+**Single Responsibility Principle**
+- Each class/method has one reason to change
+- If a method does multiple things, split it
+- If a class handles multiple concerns, decompose it
+
+**High Cohesion, Low Coupling**
+- Related functionality stays together
+- Minimize dependencies between modules
+- Use interfaces to define contracts, hide implementations
+
+### 5. Design Patterns
+
+**Actively Seek and Apply Well-Known Patterns**
+- Strategy: Encapsulate algorithms, make them interchangeable
+- Factory/Abstract Factory: Centralize object creation
+- Observer: Define one-to-many dependencies
+- Decorator: Add responsibilities dynamically
+- Template Method: Define algorithm skeleton, let subclasses override steps
+- Command: Encapsulate requests as objects
+- Repository: Abstract data access
+- Adapter: Convert interfaces
+- Facade: Simplify complex subsystems
+- Null Object: Avoid null checks
+
+**When in doubt, consult Gang of Four patterns or domain-specific patterns (e.g., Martin Fowler's enterprise patterns)**
+
+**Example:**
+```java
+// Strategy Pattern - Encapsulate tax calculation algorithms
+public interface TaxStrategy {
+    BigDecimal calculateTax(BigDecimal amount);
+}
+
+public class USTaxStrategy implements TaxStrategy {
+    private static final BigDecimal US_TAX_RATE = new BigDecimal("0.07");
+    
+    @Override
+    public BigDecimal calculateTax(BigDecimal amount) {
+        return amount.multiply(US_TAX_RATE);
+    }
+}
+
+public class EUTaxStrategy implements TaxStrategy {
+    private static final BigDecimal EU_VAT_RATE = new BigDecimal("0.20");
+    
+    @Override
+    public BigDecimal calculateTax(BigDecimal amount) {
+        return amount.multiply(EU_VAT_RATE);
+    }
+}
+
+public class PriceCalculator {
+    private final TaxStrategy taxStrategy;
+    
+    public PriceCalculator(TaxStrategy taxStrategy) {
+        this.taxStrategy = taxStrategy;
+    }
+    
+    public BigDecimal calculateFinalPrice(BigDecimal basePrice) {
+        BigDecimal tax = taxStrategy.calculateTax(basePrice);
+        return basePrice.add(tax);
+    }
+}
+```
+
+### 6. Constants & Configuration
+
+**No Magic Numbers or Strings**
+- Extract all literals to named constants or configuration
+- Use `static final` constants with SCREAMING_SNAKE_CASE names
+- Group related constants in dedicated classes or enums
+- For configuration that may change per environment, externalize to config files
+
+**Example:**
+```java
+// Bad
+if (age > 18 && status.equals("active")) {
+    discount = price * 0.15;
+}
+
+// Good
+public final class BusinessRules {
+    public static final int ADULT_AGE_THRESHOLD = 18;
+    public static final String ACTIVE_STATUS = "active";
+    public static final BigDecimal STANDARD_DISCOUNT_RATE = new BigDecimal("0.15");
+    
+    private BusinessRules() {} // Prevent instantiation
+}
+
+if (age > ADULT_AGE_THRESHOLD && ACTIVE_STATUS.equals(status)) {
+    discount = price.multiply(STANDARD_DISCOUNT_RATE);
+}
+```
+
+### 7. Layered Architecture
+
+**Business Logic in Middle Tier**
+- Presentation/UI layer: handles I/O, formatting, validation
+- Business/Domain layer: encapsulates business rules and logic
+- Data/Persistence layer: handles data access
+- Never leak business logic into presentation or data layers
+- Domain models should not depend on persistence framework
+
+**Example:**
+```java
+// Bad - Business logic in UI
+public class OrderController {
+    public void processOrder(OrderRequest request) {
+        if (request.getTotal() > 1000 && request.isVIP()) {
+            double discount = request.getTotal() * 0.1;
+            request.setTotal(request.getTotal() - discount);
+        }
+        orderRepository.save(request);
+    }
+}
+
+// Good - Business logic in domain
+public class OrderService {
+    private final OrderRepository repository;
+    private final DiscountPolicy discountPolicy;
+    
+    public Order processOrder(OrderRequest request) {
+        Order order = new Order(request);
+        order.applyDiscount(discountPolicy); // Business logic encapsulated
+        return repository.save(order);
+    }
+}
+
+public class Order {
+    private Money total;
+    private Customer customer;
+    
+    public void applyDiscount(DiscountPolicy policy) {
+        Money discount = policy.calculateDiscount(this);
+        total = total.subtract(discount);
+    }
+}
+```
+
+### 8. Naming & Clarity
+
+**Meaningful Names**
+- Variables: nouns describing what they hold (`customerName`, `orderTotal`)
+- Methods: verbs describing what they do (`calculateTotal()`, `sendNotification()`)
+- Classes: nouns describing what they represent (`Order`, `PaymentProcessor`)
+- Booleans: predicate phrases (`isActive`, `hasPermission`, `canProcess`)
+- Avoid abbreviations unless universally understood (`HTTP`, `URL` OK; `ord`, `cust` not OK)
+
+**Be Specific, Not Generic**
+- `processData()` ❌ → `parseCustomerCsvFile()` ✅
+- `manager` ❌ → `orderProcessor` ✅
+- `temp` ❌ → `unprocessedOrders` ✅
+
+### 9. Consistency
+
+**Establish and Follow Conventions**
+- If you use `getX()` for one accessor, use it for all (not mix with `fetchX()`, `retrieveX()`)
+- If one factory method is `createX()`, all should be `createY()`, `createZ()`
+- Formatting, naming, error handling, logging should be consistent throughout
+- When in doubt about a decision, default to consistency with existing code
+
+**Document Conventions**
+- If establishing a new pattern, document it clearly in comments or architecture docs
+- Ensure entire team/codebase follows the same conventions
+
+### 10. Type Safety
+
+**Use the Strictest Typing Available**
+- Leverage type systems to catch errors at compile time
+- Prefer specific types over generic ones: `List<Customer>` not `List<Object>`
+- Use enums for fixed sets of values, not strings or integers
+- Avoid `Object`, `Any`, `void*` unless absolutely necessary
+- Leverage generics for reusable, type-safe code
+
+**Example:**
+```java
+// Bad - Weak typing
+public Object processRequest(Object request) {
+    if (request instanceof String) {
+        return "Processed: " + request;
+    }
+    return null;
+}
+
+// Good - Strong typing
+public ProcessedResult processRequest(CustomerRequest request) {
+    return new ProcessedResult(request.getCustomerId(), request.getRequestType());
+}
+
+// Excellent - Generic, type-safe
+public <T extends Request> ProcessedResult<T> processRequest(T request) {
+    return new ProcessedResult<>(request);
+}
+```
+
+### 11. Organization & Data Flow Architecture
+
+**A Place for Everything, Everything in Its Place**
+- Package/namespace structure reflects domain/architecture
+- Related classes grouped together
+- Clear separation between layers/concerns
+- Dependencies flow in one direction (e.g., UI → Service → Repository → Model)
+- Utility classes separated from domain classes
+
+**Example Structure:**
+```
+com.company.product
+├── domain           // Core business entities
+│   ├── model        // Domain objects (Order, Customer)
+│   ├── service      // Business logic (OrderService)
+│   └── policy       // Business rules (DiscountPolicy)
+├── application      // Application services/use cases
+├── infrastructure   // External concerns
+│   ├── persistence  // Database repositories
+│   ├── messaging    // Event publishers
+│   └── external     // Third-party integrations
+└── presentation     // UI/API layer
+    ├── api          // REST controllers
+    └── dto          // Data transfer objects
+```
+
+**Data Flow as a Directed Acyclic Graph (DAG)**
+
+All data flow within the application must form a Directed Acyclic Graph - directional and acyclic. This principle ensures predictability, testability, and maintainability.
+
+**Directional Flow**
+- Data flows in one direction through the system
+- Each layer/component is either a source or a consumer, never both for the same data
+- UI layer → Service layer → Repository layer → Database (never reverse)
+- Clear upstream/downstream relationships
+- No bidirectional data passing between components
+
+**Acyclic - No Circular Dependencies**
+- Component A depends on B, B depends on C → C must NEVER depend on A
+- If A needs data from C, the dependency direction is wrong; refactor architecture
+- Use dependency inversion (interfaces) to break would-be cycles
+- Events/observers can enable reverse communication without circular dependencies
+- Detect cycles early: they indicate architectural problems
+
+**Benefits of DAG Architecture**
+- Predictable execution order and data transformations
+- Simplified debugging: trace data flow from source to sink
+- Easier testing: mock upstream dependencies without affecting downstream
+- Parallel processing: independent branches can execute concurrently
+- No deadlocks or infinite loops in data processing
+- Clear module boundaries and responsibilities
+
+**Example - DAG Flow:**
+```java
+// Good - Clear DAG structure
+// User Request → Controller → Service → Repository → Database
+public class OrderController {
+    private final OrderService orderService; // Depends on Service
+    
+    public ResponseEntity<OrderDto> createOrder(OrderRequest request) {
+        Order order = orderService.createOrder(request); // Data flows down
+        return ResponseEntity.ok(OrderDto.from(order)); // Transform for response
+    }
+}
+
+public class OrderService {
+    private final OrderRepository repository; // Depends on Repository
+    private final NotificationService notificationService; // Parallel dependency
+    
+    public Order createOrder(OrderRequest request) {
+        Order order = new Order(request); // Data flows through domain
+        Order savedOrder = repository.save(order); // Data flows to persistence
+        notificationService.sendConfirmation(savedOrder); // Parallel flow
+        return savedOrder; // Data flows back up
+    }
+}
+
+public class OrderRepository {
+    // No dependencies on Service or Controller layers
+    public Order save(Order order) {
+        // Persist to database
+        return order;
+    }
+}
+```
+
+**Example - Breaking Cycles with Events:**
+```java
+// Bad - Circular dependency
+public class OrderService {
+    private InventoryService inventoryService;
+    
+    public Order createOrder(OrderRequest request) {
+        Order order = new Order(request);
+        inventoryService.reserveItems(order); // Service → Inventory
+        return order;
+    }
+}
+
+public class InventoryService {
+    private OrderService orderService; // ❌ Circular! Inventory → Service
+    
+    public void onLowStock(Product product) {
+        orderService.cancelBackorders(product); // Creates cycle
+    }
+}
+
+// Good - Event-driven, acyclic
+public class OrderService {
+    private InventoryService inventoryService;
+    private EventPublisher eventPublisher;
+    
+    public Order createOrder(OrderRequest request) {
+        Order order = new Order(request);
+        inventoryService.reserveItems(order); // Service → Inventory (one direction)
+        return order;
+    }
+    
+    @EventListener
+    public void handleLowStockEvent(LowStockEvent event) {
+        // Responds to event without creating dependency
+        cancelBackorders(event.getProduct());
+    }
+}
+
+public class InventoryService {
+    private EventPublisher eventPublisher; // ✅ No dependency on OrderService
+    
+    public void onLowStock(Product product) {
+        eventPublisher.publish(new LowStockEvent(product)); // Publishes event
+    }
+}
+```
+
+**Example - Dependency Inversion:**
+```java
+// Bad - High-level module depends on low-level module
+public class OrderProcessor {
+    private MySqlOrderRepository repository; // Direct dependency on implementation
+    
+    public void process(Order order) {
+        repository.save(order);
+    }
+}
+
+// Good - Both depend on abstraction (breaks potential cycles)
+public interface OrderRepository {
+    Order save(Order order);
+}
+
+public class OrderProcessor {
+    private final OrderRepository repository; // Depends on abstraction
+    
+    public void process(Order order) {
+        repository.save(order);
+    }
+}
+
+public class MySqlOrderRepository implements OrderRepository {
+    // Implementation depends on interface (no cycle)
+    @Override
+    public Order save(Order order) {
+        // MySQL-specific implementation
+    }
+}
+```
+
+**Detecting and Preventing Cycles**
+- Use static analysis tools to detect circular dependencies
+- Organize packages in layers with clear directional dependencies
+- If you need to import from a "lower" layer, refactor the architecture
+- Extract interfaces to common packages when dependency inversion is needed
+- Document the data flow direction in architecture diagrams
+- In code reviews, reject any changes that introduce cycles
+
+**DAG Checklist**
+- [ ] All dependencies flow in one clear direction
+- [ ] No component has circular references to others
+- [ ] Layer dependencies follow the pattern: Presentation → Application → Domain → Infrastructure
+- [ ] Events/callbacks used instead of reverse dependencies
+- [ ] Dependency injection configured to enforce directional flow
+- [ ] Architecture diagrams show DAG structure
+- [ ] Build tool (Maven, Gradle) can compile layers independently in topological order
+
+### 12. Performance & Complexity
+
+**Optimize for Both Space and Time**
+- Consider both memory usage and execution speed
+- When forced to choose, document the tradeoff
+- Use appropriate data structures: O(1) lookups with HashMap, O(log n) with TreeMap
+- Avoid premature optimization, but design with performance in mind
+
+**Readability vs Efficiency**
+- If optimization makes code cryptic, prefer readability
+- Add comments explaining the performance consideration
+- Mark performance-critical sections with comments
+
+**Call Out Bottlenecks**
+```java
+// PERFORMANCE CRITICAL: This method is called in tight loop during bulk processing
+// Consider caching if customer data doesn't change frequently
+public Customer fetchCustomerDetails(String customerId) {
+    return database.query("SELECT * FROM customers WHERE id = ?", customerId);
+}
+
+// POTENTIAL BOTTLENECK: N+1 query problem
+// Consider using batch fetch or eager loading if processing many orders
+public void processOrders(List<Order> orders) {
+    for (Order order : orders) {
+        Customer customer = fetchCustomerDetails(order.getCustomerId()); // DB call in loop
+        // ...
+    }
+}
+```
+
+### 13. Natural Patterns & Symmetry
+
+**Learn from Nature**
+- Symmetry: If `open()` exists, provide `close()`; if `start()` exists, provide `stop()`
+- Balance: Constructor allocates resources → destructor/dispose releases them
+- Hierarchies: Parent-child relationships should mirror real-world structure
+- Patterns that feel natural are easier to understand and less error-prone
+
+**Example:**
+```java
+public class DatabaseConnection implements AutoCloseable {
+    
+    public void open() throws ConnectionException {
+        // Establish connection
+    }
+    
+    @Override
+    public void close() {
+        // Release connection - symmetric with open()
+    }
+}
+
+// Symmetry in API design
+public interface Cache<K, V> {
+    void put(K key, V value);
+    V get(K key);
+    void remove(K key);
+    boolean contains(K key);
+    void clear(); // Symmetric operation to bulk remove
+}
+```
+
+### 14. Orthogonality & Redundancy Minimization
+
+**Orthogonal Design**
+- Changes in one module shouldn't require changes in unrelated modules
+- Each piece of knowledge should exist in exactly one place (DRY)
+- Functions/classes should be independent; changing A shouldn't break B
+
+**Eliminate Redundancy**
+- Extract common code into reusable methods/classes
+- Avoid copy-paste; refactor into shared utilities
+- Database normalization principles apply to code: eliminate redundant data/logic
+
+**Example:**
+```java
+// Bad - Redundant validation logic
+public class CustomerValidator {
+    public boolean validateEmail(String email) {
+        return email.contains("@") && email.contains(".");
+    }
+}
+
+public class SupplierValidator {
+    public boolean validateEmail(String email) {
+        return email.contains("@") && email.contains(".");
+    }
+}
+
+// Good - Single source of truth
+public class EmailValidator {
+    private static final Pattern EMAIL_PATTERN = 
+        Pattern.compile("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+$");
+    
+    public static boolean isValid(String email) {
+        return email != null && EMAIL_PATTERN.matcher(email).matches();
+    }
+}
+
+public class CustomerValidator {
+    public boolean validateEmail(String email) {
+        return EmailValidator.isValid(email);
+    }
+}
+```
+
+### 15. Precision & Readability
+
+**Strunk & White Principles for Code**
+- Omit needless code: if it doesn't add value, remove it
+- Use active voice in method names: `processOrder()` not `orderIsProcessed()`
+- Be specific and concrete: avoid vague names and generic implementations
+- Keep methods short: one screen of code maximum when possible
+- Prefer composition over long inheritance chains
+
+**Clarity First**
+- Code is read far more often than it's written
+- Optimize for the reader, not the writer
+- If something is clever but hard to understand, add comments or refactor
+
+## Code Review Checklist
+
+Before considering code complete, verify:
+
+- [ ] Law of Demeter followed (no excessive chaining)
+- [ ] All fields/methods private by default; public only when necessary
+- [ ] Minimal constructors; builder pattern for complex objects
+- [ ] Method parameters ≤3; pass specific data not entire objects
+- [ ] Variables and fields are immutable unless documented otherwise
+- [ ] No setters unless justified and documented
+- [ ] Methods act as black boxes with clear contracts
+- [ ] Design patterns applied where appropriate
+- [ ] No magic numbers or strings; all extracted to constants
+- [ ] Business logic in domain layer, not UI or persistence
+- [ ] Names are meaningful, specific, and consistent
+- [ ] Conventions established and followed throughout
+- [ ] Strictest typing available is used
+- [ ] Code is organized logically with clear package structure
+- [ ] **Data flow is directional and acyclic (DAG) - no circular dependencies**
+- [ ] **Dependencies flow in one clear direction through layers**
+- [ ] **Events/callbacks used instead of reverse dependencies when needed**
+- [ ] Performance implications considered and documented
+- [ ] Bottlenecks identified in comments
+- [ ] Symmetry and natural patterns employed
+- [ ] No redundancy; DRY principle followed
+- [ ] Code is readable and follows Strunk & White principles
+- [ ] Comments explain *why*, not *what*
+- [ ] COGNITIVE LOAD is minimized: can a new developer understand this?
+
+## Anti-Patterns to Avoid
+
+❌ **God Objects** - Classes that know/do too much
+❌ **Feature Envy** - Methods that use more of another class than their own
+❌ **Primitive Obsession** - Using primitives instead of value objects
+❌ **Long Parameter Lists** - Methods with >3 parameters
+❌ **Data Clumps** - Same groups of data passed together (extract to object)
+❌ **Shotgun Surgery** - Single change requires modifications across many classes
+❌ **Divergent Change** - Single class changes for multiple reasons
+❌ **Refused Bequest** - Subclass doesn't use inherited methods
+❌ **Speculative Generality** - Code added for future needs that may never materialize
+
+## When to Deviate
+
+These principles are strong guidelines, not absolute laws. Deviate when:
+- Performance requirements demand it (document why)
+- Third-party frameworks require specific patterns (document constraint)
+- Language idioms differ (follow language conventions)
+- Legacy code constraints exist (document limitation)
+
+**Always document deviations** explaining why the principle doesn't apply.
+
+## Summary
+
+Writing high-quality imperative code means:
+1. **Encapsulate ruthlessly** - Hide implementation, expose minimal interface
+2. **Immutable by default** - Change only when necessary
+3. **Compose thoughtfully** - Use patterns, minimize coupling
+4. **Name precisely** - Make intent crystal clear
+5. **Stay consistent** - Establish and follow conventions
+6. **Organize logically** - Everything in its place, data flows as a DAG
+7. **Minimize cognitive load** - Make code easy to understand
+
+Every line of code is a liability. Make each one count.

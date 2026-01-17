@@ -1,0 +1,419 @@
+# Database Migration Agent Guide - Loan Inventory
+
+## Core Principles
+1. **IDEMPOTENCY**: Safe to run multiple times
+2. **SYNTAX**: MySQL-compliant syntax
+3. **LOGIC**: Proper dependency ordering and relationships
+4. **DATA MANAGEMENT**: Proper separation of schema and seed data
+
+## Idempotency Requirements
+
+### ✅ **IDEMPOTENT**
+```sql
+DROP TABLE IF EXISTS table_name;
+CREATE TABLE IF NOT EXISTS table_name (...);
+INSERT IGNORE INTO table_name VALUES (...);
+```
+
+### ❌ **NON-IDEMPOTENT**
+```sql
+DROP TABLE table_name;
+CREATE TABLE table_name (...);
+INSERT INTO table_name VALUES (...);
+```
+
+### **Idempotent ALTER TABLE Operations**
+
+For operations like `ADD COLUMN`, `RENAME COLUMN`, or `DROP INDEX` that don't have native `IF EXISTS`/`IF NOT EXISTS` support, use stored procedures with `INFORMATION_SCHEMA` checks.
+
+**CRITICAL: Use `endDelimiter://` for stored procedures in Liquibase.**
+
+- `DELIMITER` is a MySQL client command and does NOT work through JDBC/Liquibase
+- Use the Liquibase `endDelimiter://` attribute and terminate statements with `//`
+- Keep `;` inside procedure bodies (internal to procedure, not statement delimiters)
+
+```sql
+--changeset loan_team:example-idempotent-alter endDelimiter://
+--comment: Example idempotent column add
+
+DROP PROCEDURE IF EXISTS add_column_if_not_exists //
+
+CREATE PROCEDURE add_column_if_not_exists()
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'my_table' 
+        AND COLUMN_NAME = 'new_column'
+    ) THEN
+        ALTER TABLE my_table ADD COLUMN new_column BIGINT NOT NULL DEFAULT 0;
+    END IF;
+END //
+
+CALL add_column_if_not_exists() //
+
+DROP PROCEDURE IF EXISTS add_column_if_not_exists //
+
+--rollback ALTER TABLE my_table DROP COLUMN new_column //
+```
+
+**Common INFORMATION_SCHEMA checks:**
+- Columns: `INFORMATION_SCHEMA.COLUMNS` (TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE)
+- Indexes: `INFORMATION_SCHEMA.STATISTICS` (TABLE_SCHEMA, TABLE_NAME, INDEX_NAME)
+- Tables: `INFORMATION_SCHEMA.TABLES` (TABLE_SCHEMA, TABLE_NAME)
+
+## MySQL Syntax
+- `BIGINT AUTO_INCREMENT PRIMARY KEY` (not `SERIAL`)
+- `VARCHAR(36)` for UUIDs (not `UUID` type)
+- `DEFAULT (UUID())` for UUID defaults
+- `BOOLEAN` for true/false values
+- `ON DELETE RESTRICT` for foreign keys
+- `DECIMAL(19,6)` for monetary amounts
+- `JSON` for flexible data storage
+
+## Dependency Ordering
+1. **Drop tables**: Children first, then parents
+2. **Create tables**: Parents first, then children
+3. **Add constraints**: After all tables exist
+4. **Insert data**: After all constraints exist
+5. **Seed data**: Use CSV files and XML changelogs
+
+## Sequential Migration Analysis
+
+### **CRITICAL**: Read ALL migrations in order to understand current schema state
+
+**Process:**
+1. Read migrations 001-007 sequentially
+2. Track each table's evolution (creation, modifications, data)
+3. Build mental model of current schema
+4. Validate with `SHOW CREATE TABLE` commands
+
+**Example - loan_inventory evolution:**
+- 001: Created test table for validation
+- 002: Created core loan inventory tables with relationships
+- 003-006: Incremental enhancements (columns, accounts, contractor types)
+- 007: Moved seed data to CSV files for better management
+
+## Pre-Migration Checklist
+
+### **Before Writing:**
+- [ ] Read ALL migrations sequentially (001-007)
+- [ ] Build complete mental model of current schema
+- [ ] Plan dependency order carefully
+- [ ] Determine if data should be in migration or CSV seed files
+
+### **During Development:**
+- [ ] Use `IF EXISTS` / `IF NOT EXISTS` clauses
+- [ ] Use `INSERT IGNORE` for data operations
+- [ ] Follow proper dependency ordering
+- [ ] Include complete rollback statements
+- [ ] Use CSV files for seed data when appropriate
+- [ ] Use batched operations for large UPDATE/DELETE (1000+ rows)
+
+### **Before Deployment:**
+- [ ] **IDEMPOTENCY TEST**: Run migration multiple times
+- [ ] **SYNTAX CHECK**: Validate MySQL syntax
+- [ ] **LOGIC REVIEW**: Verify dependency order
+- [ ] **ROLLBACK TEST**: Ensure rollback works
+- [ ] **SEED DATA TEST**: Verify CSV data loads correctly
+
+## Project Patterns
+
+### **Standard Table Structure**
+```sql
+CREATE TABLE IF NOT EXISTS table_name (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    uuid VARCHAR(36) UNIQUE NOT NULL DEFAULT (UUID()),
+    -- business columns
+    created_by VARCHAR(36) NOT NULL,
+    modified_by VARCHAR(36) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    modified_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+```
+
+### **Loan Inventory Specific Column Types**
+- `loan_id BIGINT NOT NULL` - Loan identifiers
+- `person_id VARCHAR(36) NOT NULL` - CID HUB person identifiers
+- `org_uuid VARCHAR(36) NOT NULL` - CID HUB organization identifiers
+- `amount DECIMAL(19,6)` - Monetary amounts
+- `max_principal DECIMAL(12,2) NOT NULL` - Loan principal limits
+- `term INTEGER NOT NULL` - Loan terms in months
+- `is_on_hold BOOLEAN NOT NULL DEFAULT FALSE` - Status flags
+- `supporting_data JSON` - Flexible JSON storage for loan-specific data
+- `external_id VARCHAR(36)` - External system identifiers
+- `application_id VARCHAR(36)` - Application system identifiers
+
+### **Migration Patterns**
+
+#### **Core Schema Creation** (Migration 002)
+```sql
+-- Create type tables first
+CREATE TABLE IF NOT EXISTS loan_person_type (...);
+CREATE TABLE IF NOT EXISTS loan_party_type (...);
+
+-- Create collection/grouping tables
+CREATE TABLE IF NOT EXISTS loan_collection (...);
+
+-- Create main business tables
+CREATE TABLE IF NOT EXISTS loan (...);
+CREATE TABLE IF NOT EXISTS loan_party (...);
+CREATE TABLE IF NOT EXISTS loan_person (...);
+CREATE TABLE IF NOT EXISTS disbursement (...);
+
+-- Add foreign key constraints
+ALTER TABLE loan_party ADD FOREIGN KEY (loan_party_type_id) REFERENCES loan_party_type (id);
+-- ... other foreign keys
+
+-- Create performance indexes
+CREATE INDEX idx_loan_external_id ON loan(external_id);
+-- ... other indexes
+```
+
+#### **Incremental Changes** (Migrations 003-006)
+```sql
+-- Add new columns
+ALTER TABLE disbursement ADD COLUMN external_id VARCHAR(36);
+
+-- Create new tables
+CREATE TABLE IF NOT EXISTS loan_party_account (...);
+CREATE TABLE IF NOT EXISTS loan_person_account (...);
+
+-- Insert seed data (when appropriate)
+INSERT IGNORE INTO loan_party_type (name, description, created_by, modified_by) VALUES (...);
+```
+
+#### **Data Management Migration** (Migration 007)
+```sql
+-- Remove hardcoded data from migrations
+DELETE FROM loan_party_type;
+DELETE FROM loan_person_type;
+
+-- Data now managed via CSV files and XML changelogs
+```
+
+#### **Batched Data Operations for Large Volumes**
+
+When performing `UPDATE` or `DELETE` operations that may affect a large number of rows, use batched processing with explicit commits to avoid exceeding database session memory limits.
+
+**When to use batched operations:**
+- Data backfills affecting potentially thousands of rows
+- Mass updates before schema changes (e.g., before adding NOT NULL constraint)
+- Large DELETE operations for data cleanup
+
+**CRITICAL**: A single unbounded `UPDATE` or `DELETE` can exhaust session memory and cause migration failures in production.
+
+**IMPORTANT**: UPDATE and DELETE require different batching strategies due to how rows are excluded from subsequent iterations.
+
+---
+
+**Batched UPDATE** - requires self-excluding WHERE clause:
+
+The WHERE clause must become false after the update, otherwise you'll reprocess the same rows infinitely. For example, `WHERE column IS NULL` works when setting to non-null, because updated rows no longer match.
+
+```sql
+--changeset loan_team:example-batched-update endDelimiter://
+--comment: Example batched update - WHERE clause excludes updated rows
+
+DROP PROCEDURE IF EXISTS batched_update_example //
+
+CREATE PROCEDURE batched_update_example()
+BEGIN
+    DECLARE rows_affected INT DEFAULT 1;
+    DECLARE batch_size INT DEFAULT 1000;
+    
+    -- Loop until no more rows match the WHERE clause
+    -- CRITICAL: The SET must cause rows to no longer match WHERE
+    WHILE rows_affected > 0 DO
+        UPDATE my_table
+        SET column_name = 'new_value'      -- After this, column_name is NOT NULL
+        WHERE column_name IS NULL          -- So these rows won't match next iteration
+        LIMIT batch_size;
+        
+        SET rows_affected = ROW_COUNT();
+        COMMIT;
+    END WHILE;
+END //
+
+CALL batched_update_example() //
+
+DROP PROCEDURE IF EXISTS batched_update_example //
+
+--rollback SELECT 'No rollback needed - data update only' //
+```
+
+If your UPDATE doesn't naturally exclude processed rows, use ID-based iteration:
+
+```sql
+--changeset loan_team:example-batched-update-by-id endDelimiter://
+--comment: Example batched update using ID-based iteration
+
+DROP PROCEDURE IF EXISTS batched_update_by_id //
+
+CREATE PROCEDURE batched_update_by_id()
+BEGIN
+    DECLARE last_id BIGINT DEFAULT 0;
+    DECLARE rows_affected INT DEFAULT 1;
+    DECLARE batch_size INT DEFAULT 1000;
+    
+    WHILE rows_affected > 0 DO
+        UPDATE my_table
+        SET some_column = 'value'
+        WHERE id > last_id
+        ORDER BY id
+        LIMIT batch_size;
+        
+        SET rows_affected = ROW_COUNT();
+        
+        IF rows_affected > 0 THEN
+            SELECT MAX(id) INTO last_id FROM my_table WHERE id > last_id ORDER BY id LIMIT batch_size;
+        END IF;
+        
+        COMMIT;
+    END WHILE;
+END //
+
+CALL batched_update_by_id() //
+
+DROP PROCEDURE IF EXISTS batched_update_by_id //
+
+--rollback SELECT 'No rollback needed - data update only' //
+```
+
+---
+
+**Batched DELETE** - naturally self-excluding:
+
+DELETE is simpler because deleted rows are removed from the table. Subsequent iterations automatically find the next batch of matching rows.
+
+```sql
+--changeset loan_team:example-batched-delete endDelimiter://
+--comment: Example batched delete - deleted rows are naturally excluded
+
+DROP PROCEDURE IF EXISTS batched_delete_example //
+
+CREATE PROCEDURE batched_delete_example()
+BEGIN
+    DECLARE rows_affected INT DEFAULT 1;
+    DECLARE batch_size INT DEFAULT 1000;
+    
+    -- Loop until no more rows match
+    -- Deleted rows are gone, so next iteration finds new matches
+    WHILE rows_affected > 0 DO
+        DELETE FROM my_table
+        WHERE condition = true
+        LIMIT batch_size;
+        
+        SET rows_affected = ROW_COUNT();
+        COMMIT;
+    END WHILE;
+END //
+
+CALL batched_delete_example() //
+
+DROP PROCEDURE IF EXISTS batched_delete_example //
+
+--rollback SELECT 'No rollback needed - data delete only' //
+```
+
+---
+
+**Best practices for batched operations:**
+- Use `batch_size` of 1000-5000 rows depending on row size
+- Always `COMMIT` after each batch to release locks and memory
+- Use `ROW_COUNT()` to detect when processing is complete
+- Ensure the `WHERE` clause uses indexed columns for performance
+- For UPDATE: verify that processed rows won't match the WHERE clause again
+- For DELETE: simpler pattern works since deleted rows are removed
+- Consider adding progress logging for very large operations
+
+### **Seed Data Management**
+
+#### **CSV Data Files**
+- Store in `src/main/resources/db/changelog/data/` directory
+- Use descriptive filenames matching table names
+- Include all required columns including audit fields
+- Use proper CSV formatting with quotes for complex data
+
+#### **XML Seed Changelogs**
+```xml
+<changeSet id="seed-table-name-1" author="loan_team" context="dev,qa">
+    <comment>Load seed data for table_name lookup table</comment>
+    <loadUpdateData
+        tableName="table_name"
+        file="../data/table_name.csv"
+        primaryKey="id"
+        relativeToChangelogFile="true"
+        separator=","
+        quotchar='"'>
+        <column name="id" type="NUMERIC"/>
+        <column name="name" type="STRING"/>
+        <!-- other columns -->
+    </loadUpdateData>
+</changeSet>
+```
+
+## Error Prevention
+
+### **Common Mistakes**
+- ❌ Creating tables without `IF NOT EXISTS`
+- ❌ Inserting data without `IGNORE` clause
+- ❌ Wrong dependency order (child before parent)
+- ❌ Missing rollback statements
+- ❌ Using PostgreSQL syntax in MySQL
+- ❌ Creating foreign keys before referenced tables exist
+- ❌ Hardcoding seed data in migration files instead of CSV
+- ❌ Missing audit fields (created_by, modified_by, etc.)
+- ❌ Unbounded UPDATE/DELETE on large tables (exceeds session memory)
+
+### **Testing Strategy**
+1. **Fresh Database Test**: Run on empty database
+2. **Re-run Test**: Run multiple times on same database
+3. **Rollback Test**: Verify rollback works
+4. **Seed Data Test**: Verify CSV data loads correctly
+5. **Foreign Key Test**: Verify all relationships work
+
+## Quality Assurance
+
+### **Code Review Checklist**
+- [ ] All operations are idempotent
+- [ ] MySQL syntax is correct
+- [ ] Dependency order is logical
+- [ ] Foreign key relationships are sound
+- [ ] Rollback statements are complete
+- [ ] Seed data is in CSV files, not hardcoded
+- [ ] Audit fields are included in all tables
+- [ ] Performance indexes are created for lookup columns
+- [ ] Large data operations use batched processing with commits
+
+### **Emergency Procedures**
+**If Migration Fails:**
+1. **STOP** - Don't fix in place
+2. **ANALYZE** - Identify root cause
+3. **ROLLBACK** - Use rollback statements
+4. **FIX** - Create corrected migration
+5. **TEST** - Verify on clean database
+
+## Loan Inventory Specific Guidelines
+
+### **Table Relationships**
+- `loan_collection` → `loan` → `disbursement`
+- `loan_collection` → `loan_party` → `loan_party_account`
+- `loan` → `loan_person` → `loan_person_account`
+- Type tables (`loan_person_type`, `loan_party_type`) are referenced by business tables
+
+### **Data Integration Points**
+- `person_id` and `org_uuid` reference CID HUB systems
+- `external_id` and `application_id` reference external loan systems
+- `supporting_data` JSON field stores loan-specific metadata
+
+### **Business Rules**
+- Loans belong to collections for organizational purposes
+- Parties can have multiple roles (seller, servicer, owner, etc.)
+- Persons can have multiple roles (primary, co-signer, co-borrower)
+- Disbursements track actual funding events
+- Account tables track financial relationships
+
+---
+
+*This guide ensures all loan inventory migrations are idempotent, correct, and reliable while maintaining proper data management practices.*

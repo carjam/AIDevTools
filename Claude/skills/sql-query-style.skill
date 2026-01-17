@@ -1,0 +1,1444 @@
+---
+name: sql-query-style
+description: Guidelines for writing SQL queries that are readable, maintainable, and optimized for performance. Applies when writing SELECT, INSERT, UPDATE, or DELETE queries.
+version: 1.0.0
+triggers:
+  keywords:
+    - sql query
+    - write sql
+    - select from
+    - sql statement
+    - database query
+  intent_patterns:
+    - requests to write or review SQL queries
+    - requests for query optimization
+    - database query construction
+enforcement: always
+---
+
+# SQL Query Style Guide
+
+## Purpose
+
+This skill provides guidelines for writing SQL queries that are:
+1. **Readable** - Easy to scan and understand at a glance
+2. **Maintainable** - Simple to modify without introducing syntax errors
+3. **Performant** - Optimized for fast execution and efficient use of indexes
+
+---
+
+## Formatting for Readability & Maintainability
+
+### SELECT Clause: Leading Commas on Newlines
+
+Place each column on its own line with the comma at the **beginning** of the line (except the first). This allows developers to easily add, remove, or comment out columns without breaking syntax.
+
+✅ **Good:**
+```sql
+SELECT
+    u.user_id
+    ,u.first_name
+    ,u.last_name
+    ,u.email
+    ,u.created_at
+FROM users u
+```
+
+❌ **Bad:**
+```sql
+SELECT u.user_id, u.first_name, u.last_name, u.email, u.created_at
+FROM users u
+```
+
+❌ **Also Bad (trailing commas):**
+```sql
+SELECT
+    u.user_id,
+    u.first_name,
+    u.last_name,  -- commenting this out breaks the query
+    u.email,
+    u.created_at
+FROM users u
+```
+
+### WHERE Clause: Start with 1=1 Pattern
+
+Always start the WHERE clause with `WHERE 1=1`. Subsequent conditions begin with `AND` on their own line. This allows any condition to be added, removed, or commented out without breaking syntax.
+
+✅ **Good:**
+```sql
+SELECT
+    o.order_id
+    ,o.order_date
+    ,o.total_amount
+FROM orders o
+WHERE 1=1
+    AND o.status = 'completed'
+    AND o.order_date >= '2025-01-01'
+    -- AND o.region_id = 5  -- easily toggled for debugging
+    AND o.customer_id = 12345
+```
+
+❌ **Bad:**
+```sql
+SELECT o.order_id, o.order_date, o.total_amount
+FROM orders o
+WHERE o.status = 'completed'  -- can't comment this without fixing next line
+    AND o.order_date >= '2025-01-01'
+    AND o.customer_id = 12345
+```
+
+### Keyword Capitalization
+
+Use UPPERCASE for all SQL keywords to visually distinguish them from identifiers.
+
+✅ **Good:** `SELECT`, `FROM`, `WHERE`, `JOIN`, `AND`, `ORDER BY`, `GROUP BY`
+
+❌ **Bad:** `select`, `from`, `where`, `join`, `and`
+
+### Table Aliases
+
+Always use short, meaningful table aliases. Prefix all column references with the alias.
+
+✅ **Good:**
+```sql
+SELECT
+    c.customer_id
+    ,c.customer_name
+    ,o.order_id
+    ,o.order_date
+FROM customers c
+INNER JOIN orders o ON o.customer_id = c.customer_id
+```
+
+❌ **Bad:**
+```sql
+SELECT
+    customer_id      -- ambiguous if both tables have this column
+    ,customer_name
+    ,order_id
+    ,order_date
+FROM customers
+INNER JOIN orders ON orders.customer_id = customers.customer_id
+```
+
+### JOIN Formatting
+
+Place each JOIN on its own line. Put the ON clause on the same line or indented below.
+
+✅ **Good:**
+```sql
+SELECT
+    c.customer_name
+    ,o.order_id
+    ,oi.product_id
+    ,p.product_name
+FROM customers c
+INNER JOIN orders o ON o.customer_id = c.customer_id
+INNER JOIN order_items oi ON oi.order_id = o.order_id
+LEFT JOIN products p ON p.product_id = oi.product_id
+WHERE 1=1
+    AND c.status = 'active'
+```
+
+### Indentation & Alignment
+
+Use consistent indentation (4 spaces recommended). Major clauses (SELECT, FROM, WHERE, GROUP BY, ORDER BY) should start at column 0.
+
+```sql
+SELECT
+    u.user_id
+    ,u.email
+    ,COUNT(o.order_id) AS order_count
+    ,SUM(o.total_amount) AS total_spent
+FROM users u
+LEFT JOIN orders o ON o.user_id = u.user_id
+WHERE 1=1
+    AND u.account_status = 'active'
+    AND u.created_at >= '2024-01-01'
+GROUP BY
+    u.user_id
+    ,u.email
+HAVING COUNT(o.order_id) > 5
+ORDER BY
+    total_spent DESC
+    ,u.email ASC
+```
+
+### Use CTEs for Complex Queries
+
+Break complex queries into Common Table Expressions (CTEs) for readability. Each CTE should do one logical thing.
+
+**⚠️ CTE Materialization Varies by Database:**
+- **PostgreSQL 12+**: CTEs are inlined by default (optimizer can push predicates). Use `MATERIALIZED` hint if you want to force materialization.
+- **SQL Server**: CTEs are always inlined (re-evaluated each time referenced).
+- **MySQL 8+**: CTEs are materialized if referenced multiple times; inlined if referenced once.
+
+If you reference a CTE multiple times and it's expensive, consider using a temp table instead for consistent behavior across databases.
+
+✅ **Good:**
+```sql
+WITH active_customers AS (
+    SELECT
+        c.customer_id
+        ,c.customer_name
+        ,c.region_id
+    FROM customers c
+    WHERE 1=1
+        AND c.status = 'active'
+        AND c.created_at >= '2024-01-01'
+)
+,customer_orders AS (
+    SELECT
+        ac.customer_id
+        ,COUNT(o.order_id) AS order_count
+        ,SUM(o.total_amount) AS total_spent
+    FROM active_customers ac
+    INNER JOIN orders o ON o.customer_id = ac.customer_id
+    WHERE 1=1
+        AND o.status = 'completed'
+    GROUP BY
+        ac.customer_id
+)
+SELECT
+    ac.customer_id
+    ,ac.customer_name
+    ,co.order_count
+    ,co.total_spent
+FROM active_customers ac
+INNER JOIN customer_orders co ON co.customer_id = ac.customer_id
+WHERE 1=1
+    AND co.total_spent > 1000
+ORDER BY
+    co.total_spent DESC
+```
+
+---
+
+## Performance Optimization Guidelines
+
+### Never Use SELECT *
+
+Always explicitly list all columns you need. This:
+- Prevents breaking changes when table structure changes
+- Reduces network transfer and memory usage
+- Makes the query's intent explicit
+- Allows the optimizer to use covering indexes
+
+✅ **Good:**
+```sql
+SELECT
+    u.user_id
+    ,u.email
+    ,u.first_name
+FROM users u
+```
+
+❌ **Bad:**
+```sql
+SELECT * FROM users
+```
+
+### Prefer AND Over OR
+
+OR conditions often prevent index usage and cause full table scans. Rewrite OR conditions as UNION ALL or IN clauses when possible.
+
+✅ **Good (using IN):**
+```sql
+WHERE 1=1
+    AND o.status IN ('pending', 'processing', 'shipped')
+```
+
+✅ **Good (using UNION ALL for complex OR):**
+```sql
+SELECT o.order_id, o.total FROM orders o WHERE o.status = 'pending'
+UNION ALL
+SELECT o.order_id, o.total FROM orders o WHERE o.priority = 'high' AND o.status != 'pending'
+```
+
+❌ **Bad:**
+```sql
+WHERE 1=1
+    AND (o.status = 'pending' OR o.priority = 'high')
+```
+
+### Avoid LIKE with Leading Wildcards
+
+LIKE patterns starting with `%` cannot use indexes and cause full table scans. Be as specific as possible.
+
+✅ **Good (trailing wildcard only - can use index):**
+```sql
+WHERE 1=1
+    AND u.email LIKE 'john.smith%'
+```
+
+✅ **Better (exact match when possible):**
+```sql
+WHERE 1=1
+    AND u.email_domain = 'example.com'
+```
+
+❌ **Bad (leading wildcard - full table scan):**
+```sql
+WHERE 1=1
+    AND u.email LIKE '%@example.com'
+```
+
+❌ **Worst (wildcards on both ends):**
+```sql
+WHERE 1=1
+    AND u.name LIKE '%smith%'
+```
+
+**If you must search within strings**, consider:
+- Full-text search indexes
+- Separate searchable columns (e.g., `email_domain`)
+- Application-level caching
+
+### Prefer Numeric Comparisons Over String Comparisons
+
+Numeric comparisons are faster than string comparisons. Use foreign keys, ENUMs, or lookup tables with integer IDs.
+
+✅ **Good:**
+```sql
+WHERE 1=1
+    AND o.status_id = 3  -- Uses status lookup table
+```
+
+❌ **Bad:**
+```sql
+WHERE 1=1
+    AND o.status = 'completed'  -- String comparison on every row
+```
+
+### Avoid Functions on Indexed Columns in WHERE
+
+Applying functions to columns prevents index usage. Rewrite to keep the column "naked."
+
+✅ **Good:**
+```sql
+WHERE 1=1
+    AND o.created_at >= '2025-01-01'
+    AND o.created_at < '2025-02-01'
+```
+
+❌ **Bad:**
+```sql
+WHERE 1=1
+    AND YEAR(o.created_at) = 2025
+    AND MONTH(o.created_at) = 1
+```
+
+✅ **Good:**
+```sql
+WHERE 1=1
+    AND u.email = 'John.Smith@Example.com'  -- store normalized in DB
+```
+
+❌ **Bad:**
+```sql
+WHERE 1=1
+    AND LOWER(u.email) = 'john.smith@example.com'
+```
+
+### Use EXISTS Instead of IN for Subqueries
+
+EXISTS often performs better than IN for correlated subqueries, especially with large datasets.
+
+✅ **Good:**
+```sql
+SELECT
+    c.customer_id
+    ,c.customer_name
+FROM customers c
+WHERE 1=1
+    AND EXISTS (
+        SELECT 1
+        FROM orders o
+        WHERE 1=1
+            AND o.customer_id = c.customer_id
+            AND o.status = 'completed'
+    )
+```
+
+❌ **Less Optimal:**
+```sql
+SELECT
+    c.customer_id
+    ,c.customer_name
+FROM customers c
+WHERE 1=1
+    AND c.customer_id IN (
+        SELECT o.customer_id
+        FROM orders o
+        WHERE o.status = 'completed'
+    )
+```
+
+### Use CROSS APPLY / LATERAL Instead of LEFT JOIN with Subqueries
+
+When you need to join each row to a correlated subquery (especially TOP N or aggregations), CROSS APPLY (SQL Server) or LATERAL JOIN (PostgreSQL/MySQL 8+) is often faster than LEFT JOIN with subqueries.
+
+**Why it's faster:**
+- Evaluates the subquery once per outer row, short-circuiting early
+- Optimizer can push predicates down more effectively
+- Avoids materializing the entire subquery result set
+
+✅ **Good (SQL Server - CROSS APPLY):**
+```sql
+SELECT
+    c.customer_id
+    ,c.customer_name
+    ,recent.order_id
+    ,recent.order_date
+    ,recent.total_amount
+FROM customers c
+CROSS APPLY (
+    SELECT TOP 3
+        o.order_id
+        ,o.order_date
+        ,o.total_amount
+    FROM orders o
+    WHERE 1=1
+        AND o.customer_id = c.customer_id
+    ORDER BY o.order_date DESC
+) recent
+WHERE 1=1
+    AND c.status_id = 1
+```
+
+✅ **Good (PostgreSQL/MySQL 8+ - LATERAL):**
+```sql
+SELECT
+    c.customer_id
+    ,c.customer_name
+    ,recent.order_id
+    ,recent.order_date
+    ,recent.total_amount
+FROM customers c
+CROSS JOIN LATERAL (
+    SELECT
+        o.order_id
+        ,o.order_date
+        ,o.total_amount
+    FROM orders o
+    WHERE 1=1
+        AND o.customer_id = c.customer_id
+    ORDER BY o.order_date DESC
+    LIMIT 3
+) recent
+WHERE 1=1
+    AND c.status_id = 1
+```
+
+❌ **Slower (LEFT JOIN with subquery):**
+```sql
+SELECT
+    c.customer_id
+    ,c.customer_name
+    ,o.order_id
+    ,o.order_date
+    ,o.total_amount
+FROM customers c
+LEFT JOIN (
+    SELECT
+        o.order_id
+        ,o.customer_id
+        ,o.order_date
+        ,o.total_amount
+        ,ROW_NUMBER() OVER (PARTITION BY o.customer_id ORDER BY o.order_date DESC) AS rn
+    FROM orders o
+) o ON o.customer_id = c.customer_id AND o.rn <= 3
+WHERE 1=1
+    AND c.status_id = 1
+```
+
+**Use OUTER APPLY / LEFT JOIN LATERAL** when you need to keep outer rows even when the subquery returns no matches (like LEFT JOIN behavior):
+
+```sql
+-- SQL Server
+FROM customers c
+OUTER APPLY (
+    SELECT TOP 1 ...
+) recent
+
+-- PostgreSQL/MySQL 8+
+FROM customers c
+LEFT JOIN LATERAL (
+    SELECT ... LIMIT 1
+) recent ON true
+```
+
+**Best use cases for CROSS APPLY / LATERAL:**
+- Top N per group queries (most recent order per customer)
+- Aggregations per row (sum of last 30 days per product)
+- Joining to table-valued functions
+- Unpivoting or expanding rows
+
+### Use UNION ALL Instead of UNION
+
+UNION removes duplicates (requiring a sort). Use UNION ALL when you know there are no duplicates or duplicates are acceptable.
+
+✅ **Good (when duplicates impossible or acceptable):**
+```sql
+SELECT user_id, email FROM active_users
+UNION ALL
+SELECT user_id, email FROM pending_users
+```
+
+❌ **Slower (unnecessary duplicate check):**
+```sql
+SELECT user_id, email FROM active_users
+UNION
+SELECT user_id, email FROM pending_users
+```
+
+### Put Most Selective Conditions First
+
+While optimizers often reorder conditions, it's good practice to put the most selective (filtering the most rows) conditions first in the WHERE clause.
+
+```sql
+WHERE 1=1
+    AND o.customer_id = 12345        -- Very selective: one customer
+    AND o.status = 'completed'        -- Moderately selective
+    AND o.created_at >= '2025-01-01'  -- Least selective
+```
+
+### Be Explicit About NULLs
+
+NULL comparisons can be tricky. Be explicit about NULL handling.
+
+✅ **Good:**
+```sql
+WHERE 1=1
+    AND o.cancelled_at IS NULL  -- Explicitly checking for NULL
+    AND o.discount_amount IS NOT NULL
+```
+
+❌ **Bad (NULL never equals anything):**
+```sql
+WHERE 1=1
+    AND o.cancelled_at = NULL   -- This NEVER matches!
+    AND o.discount_amount != 0  -- Excludes NULLs unintentionally
+```
+
+### Use Explicit JOINs Over Implicit Joins
+
+Modern explicit JOIN syntax is clearer, less error-prone, and easier to maintain.
+
+✅ **Good:**
+```sql
+SELECT
+    c.customer_name
+    ,o.order_id
+FROM customers c
+INNER JOIN orders o ON o.customer_id = c.customer_id
+WHERE 1=1
+    AND c.status = 'active'
+```
+
+❌ **Bad (implicit join):**
+```sql
+SELECT
+    c.customer_name
+    ,o.order_id
+FROM customers c, orders o
+WHERE 1=1
+    AND c.customer_id = o.customer_id  -- Easy to forget!
+    AND c.status = 'active'
+```
+
+### Limit Results When Possible
+
+Always use LIMIT/TOP when you only need a subset of results, especially during development and debugging.
+
+```sql
+SELECT
+    u.user_id
+    ,u.email
+FROM users u
+WHERE 1=1
+    AND u.status = 'active'
+ORDER BY u.created_at DESC
+LIMIT 100
+```
+
+### Avoid Implicit Type Conversions
+
+When comparing columns to values, ensure types match. Implicit conversions prevent index usage and evaluate on every row.
+
+✅ **Good:**
+```sql
+WHERE 1=1
+    AND u.user_id = 12345              -- int = int
+    AND u.zip_code = '90210'           -- varchar = varchar (quoted string)
+```
+
+❌ **Bad:**
+```sql
+WHERE 1=1
+    AND u.user_id = '12345'            -- int column vs string literal
+    AND u.zip_code = 90210             -- varchar column vs numeric literal
+```
+
+**Common culprits:**
+- Comparing numeric columns to quoted string literals
+- Comparing varchar columns to unquoted numbers
+- Date columns compared to strings in ambiguous formats
+
+### Use NOT EXISTS Instead of NOT IN
+
+NOT IN has dangerous behavior when NULLs are present: if ANY value in the subquery is NULL, the entire NOT IN returns no rows. NOT EXISTS handles NULLs correctly.
+
+✅ **Good:**
+```sql
+-- Find customers with no orders (NULL-safe)
+SELECT
+    c.customer_id
+    ,c.customer_name
+FROM customers c
+WHERE 1=1
+    AND NOT EXISTS (
+        SELECT 1
+        FROM orders o
+        WHERE 1=1
+            AND o.customer_id = c.customer_id
+    )
+```
+
+❌ **Dangerous (breaks if any customer_id in orders is NULL):**
+```sql
+SELECT
+    c.customer_id
+    ,c.customer_name
+FROM customers c
+WHERE 1=1
+    AND c.customer_id NOT IN (
+        SELECT o.customer_id
+        FROM orders o
+        -- If ANY o.customer_id is NULL, this returns ZERO rows!
+    )
+```
+
+### Pagination: Prefer Keyset Over OFFSET
+
+OFFSET-based pagination degrades as page numbers increase (database must scan and discard all skipped rows). Keyset (cursor) pagination maintains constant performance.
+
+❌ **Bad (slow at high page numbers):**
+```sql
+-- Page 1000 must scan and discard 999,000 rows first
+SELECT
+    p.product_id
+    ,p.product_name
+FROM products p
+ORDER BY p.created_at DESC
+LIMIT 100 OFFSET 99900
+```
+
+✅ **Good (constant performance regardless of page depth):**
+```sql
+-- Pass the last seen values from previous page
+SELECT
+    p.product_id
+    ,p.product_name
+FROM products p
+WHERE 1=1
+    AND (p.created_at, p.product_id) < ('2025-01-05 10:30:00', 50432)
+ORDER BY p.created_at DESC, p.product_id DESC
+LIMIT 100
+```
+
+**Keyset pagination requires:**
+- Deterministic ordering (include unique column as tiebreaker)
+- Passing the last seen values to the next query
+- Index on the ORDER BY columns
+
+### Avoid Unnecessary DISTINCT
+
+DISTINCT requires sorting and deduplication. If you need DISTINCT, often it indicates a JOIN problem (missing condition or wrong join type).
+
+❌ **Bad (masking a duplicate rows problem):**
+```sql
+SELECT DISTINCT
+    c.customer_id
+    ,c.customer_name
+FROM customers c
+INNER JOIN orders o ON o.customer_id = c.customer_id
+-- DISTINCT hides that we're getting one row per order, not per customer
+```
+
+✅ **Good (fix the actual problem):**
+```sql
+-- Option 1: Use EXISTS if you just need customers who have orders
+SELECT
+    c.customer_id
+    ,c.customer_name
+FROM customers c
+WHERE 1=1
+    AND EXISTS (
+        SELECT 1 FROM orders o WHERE o.customer_id = c.customer_id
+    )
+
+-- Option 2: Aggregate if you need order data
+SELECT
+    c.customer_id
+    ,c.customer_name
+    ,COUNT(o.order_id) AS order_count
+FROM customers c
+INNER JOIN orders o ON o.customer_id = c.customer_id
+GROUP BY
+    c.customer_id
+    ,c.customer_name
+```
+
+### Use Parameterized Queries
+
+Never concatenate user input into SQL strings. Use parameterized queries (prepared statements) for:
+- **Security**: Prevents SQL injection attacks
+- **Performance**: Database caches and reuses query execution plans
+
+✅ **Good (parameterized):**
+```sql
+-- Parameters shown as placeholders (syntax varies by language/driver)
+SELECT
+    u.user_id
+    ,u.email
+FROM users u
+WHERE 1=1
+    AND u.email = ?          -- JDBC/MySQL
+    AND u.status = $1        -- PostgreSQL
+    AND u.region = @region   -- SQL Server
+```
+
+❌ **Bad (string concatenation - SQL injection risk):**
+```python
+# NEVER DO THIS
+query = f"SELECT * FROM users WHERE email = '{user_input}'"
+```
+
+### Avoid Dynamic SQL
+
+Dynamic SQL constructs queries as strings at runtime. Even with parameterized values, dynamic SQL introduces security risks, maintenance headaches, and performance issues.
+
+**Why dynamic SQL is dangerous:**
+- **SQL injection**: Even in stored procedures, string concatenation can be exploited
+- **Harder to audit**: Security scanners can't analyze runtime-generated queries
+- **No compile-time validation**: Syntax errors only surface at runtime
+- **Plan cache pollution**: Each unique string generates a new execution plan
+- **Privilege escalation**: Dynamic SQL executes with the caller's permissions
+
+❌ **Bad (dynamic SQL in stored procedure):**
+```sql
+-- SQL Server - VULNERABLE even in a stored procedure!
+CREATE PROCEDURE SearchProducts
+    @column_name VARCHAR(50),
+    @search_value VARCHAR(100)
+AS
+BEGIN
+    DECLARE @sql NVARCHAR(MAX)
+    -- Attacker can inject via @column_name: "1=1; DROP TABLE products;--"
+    SET @sql = 'SELECT * FROM products WHERE ' + @column_name + ' = ''' + @search_value + ''''
+    EXEC(@sql)
+END
+```
+
+❌ **Bad (dynamic table/column names):**
+```sql
+-- MySQL - Building query from user input
+SET @sql = CONCAT('SELECT * FROM ', user_table_name, ' WHERE id = ?');
+PREPARE stmt FROM @sql;
+EXECUTE stmt USING @id;
+-- Even with parameterized @id, user_table_name can be exploited
+```
+
+**Safer alternatives to dynamic SQL:**
+
+✅ **Use CASE expressions for dynamic column selection:**
+```sql
+SELECT
+    p.product_id
+    ,CASE @sort_field
+        WHEN 'name' THEN p.product_name
+        WHEN 'price' THEN CAST(p.price AS VARCHAR)
+        WHEN 'date' THEN CAST(p.created_at AS VARCHAR)
+    END AS sort_value
+FROM products p
+ORDER BY sort_value
+```
+
+✅ **Use IF/ELSE or UNION ALL for different query paths:**
+```sql
+-- Instead of dynamic WHERE clause, use separate queries
+IF @filter_type = 'active' THEN
+    SELECT p.product_id, p.name FROM products p WHERE p.status = 'active';
+ELSEIF @filter_type = 'featured' THEN
+    SELECT p.product_id, p.name FROM products p WHERE p.is_featured = 1;
+ELSE
+    SELECT p.product_id, p.name FROM products p;
+END IF;
+```
+
+✅ **Whitelist validation for truly dynamic requirements:**
+```sql
+-- SQL Server - If you MUST use dynamic SQL, validate against whitelist
+CREATE PROCEDURE GetProductsSorted
+    @sort_column VARCHAR(50)
+AS
+BEGIN
+    -- WHITELIST: Only allow known-safe column names
+    IF @sort_column NOT IN ('product_name', 'price', 'created_at', 'stock_qty')
+    BEGIN
+        RAISERROR('Invalid sort column', 16, 1)
+        RETURN
+    END
+    
+    DECLARE @sql NVARCHAR(MAX)
+    -- Use QUOTENAME to safely escape identifier
+    SET @sql = N'SELECT product_id, product_name, price 
+                 FROM products 
+                 ORDER BY ' + QUOTENAME(@sort_column)
+    
+    EXEC sp_executesql @sql  -- Use sp_executesql, never EXEC()
+END
+```
+
+✅ **Application-level query building with strict whitelists:**
+```python
+# Python - Whitelist approach for dynamic queries
+ALLOWED_SORT_COLUMNS = {'name', 'price', 'created_at', 'rating'}
+ALLOWED_SORT_DIRECTIONS = {'ASC', 'DESC'}
+
+def get_products(sort_by: str, direction: str):
+    # Validate against whitelist - reject anything not explicitly allowed
+    if sort_by not in ALLOWED_SORT_COLUMNS:
+        raise ValueError(f"Invalid sort column: {sort_by}")
+    if direction.upper() not in ALLOWED_SORT_DIRECTIONS:
+        raise ValueError(f"Invalid sort direction: {direction}")
+    
+    # Safe to use because values are from whitelist, not user input
+    query = f"""
+        SELECT product_id, name, price
+        FROM products
+        ORDER BY {sort_by} {direction.upper()}
+    """
+    return execute_query(query)
+```
+
+**If you absolutely must use dynamic SQL:**
+
+1. **Validate all dynamic parts against a whitelist** - never trust user input
+2. **Use QUOTENAME() (SQL Server) or backticks (MySQL)** for identifiers
+3. **Use sp_executesql with parameters** (SQL Server) - never EXEC() with concatenation
+4. **Use PREPARE/EXECUTE with parameters** (MySQL/PostgreSQL) for values
+5. **Log all dynamic SQL** for security auditing
+6. **Minimize scope** - only make truly necessary parts dynamic
+7. **Code review required** - dynamic SQL should always require explicit approval
+
+### BETWEEN with Datetimes: Watch the Boundaries
+
+BETWEEN is inclusive on both ends. With datetime columns, this causes subtle bugs.
+
+❌ **Bad (may include next day's data):**
+```sql
+WHERE 1=1
+    AND o.created_at BETWEEN '2025-01-01' AND '2025-01-31'
+    -- If created_at has time component, this misses 2025-01-31 01:00:00
+    -- Or if dates auto-cast to 00:00:00, it excludes most of Jan 31
+```
+
+✅ **Good (explicit range with exclusive upper bound):**
+```sql
+WHERE 1=1
+    AND o.created_at >= '2025-01-01'
+    AND o.created_at < '2025-02-01'  -- Exclusive: captures all of January
+```
+
+### COUNT(*) vs COUNT(column)
+
+These behave differently with NULLs:
+- `COUNT(*)` - Counts all rows
+- `COUNT(column)` - Counts non-NULL values only
+
+```sql
+SELECT
+    COUNT(*) AS total_rows              -- All rows: 100
+    ,COUNT(discount_code) AS with_code  -- Non-NULL only: 23
+    ,COUNT(1) AS also_total             -- Same as COUNT(*): 100
+FROM orders
+```
+
+Use `COUNT(*)` for row counts, `COUNT(column)` when you specifically need to count non-NULL values.
+
+### Be Index-Aware: Column Order Matters
+
+Composite indexes can only be used left-to-right. If you have an index on `(status, created_at, customer_id)`:
+
+✅ **Can use the index:**
+```sql
+WHERE status = 'active'                                    -- Uses index
+WHERE status = 'active' AND created_at >= '2025-01-01'    -- Uses index
+WHERE status = 'active' AND created_at >= '2025-01-01' AND customer_id = 5  -- Uses full index
+```
+
+❌ **Cannot use (or only partially use) the index:**
+```sql
+WHERE created_at >= '2025-01-01'                          -- Can't skip status
+WHERE customer_id = 5                                      -- Can't skip status and created_at
+WHERE status = 'active' AND customer_id = 5               -- Can't skip created_at in middle
+```
+
+**Design principle**: Put equality conditions first in composite indexes, range conditions last.
+
+### Avoid Scalar Subqueries in SELECT
+
+Scalar subqueries (subqueries returning a single value in SELECT) execute once per row—the N+1 problem. Replace with JOINs or window functions.
+
+❌ **Bad (N+1 - subquery runs for every row):**
+```sql
+SELECT
+    o.order_id
+    ,o.customer_id
+    ,(SELECT c.customer_name FROM customers c WHERE c.customer_id = o.customer_id) AS customer_name
+    ,(SELECT MAX(o2.order_date) FROM orders o2 WHERE o2.customer_id = o.customer_id) AS last_order
+FROM orders o
+```
+
+✅ **Good (single JOIN, single pass):**
+```sql
+SELECT
+    o.order_id
+    ,o.customer_id
+    ,c.customer_name
+    ,lo.last_order
+FROM orders o
+INNER JOIN customers c ON c.customer_id = o.customer_id
+INNER JOIN (
+    SELECT customer_id, MAX(order_date) AS last_order
+    FROM orders
+    GROUP BY customer_id
+) lo ON lo.customer_id = o.customer_id
+```
+
+✅ **Good (window function for same-table aggregates):**
+```sql
+SELECT
+    o.order_id
+    ,o.customer_id
+    ,c.customer_name
+    ,MAX(o.order_date) OVER (PARTITION BY o.customer_id) AS last_order
+FROM orders o
+INNER JOIN customers c ON c.customer_id = o.customer_id
+```
+
+### Negative Conditions Often Can't Use Indexes
+
+Conditions using `NOT`, `!=`, `<>`, `NOT IN`, `NOT LIKE` often result in full table scans because indexes are optimized for finding matches, not non-matches.
+
+❌ **Often can't use index:**
+```sql
+WHERE 1=1
+    AND o.status != 'cancelled'        -- Scans all non-cancelled (most rows)
+    AND o.category_id NOT IN (5, 10)   -- Can't efficiently use index
+    AND o.notes IS NOT NULL            -- May scan entire table
+```
+
+✅ **Better (positive conditions when possible):**
+```sql
+WHERE 1=1
+    AND o.status IN ('pending', 'processing', 'completed', 'shipped')  -- Explicit list
+    AND o.category_id IN (1, 2, 3, 4, 6, 7, 8, 9)  -- If list is small
+```
+
+**When negative conditions are unavoidable:** Ensure the positive matches are the minority. `WHERE deleted = 0` is fine if 99% of rows have `deleted = 0` (index wouldn't help anyway).
+
+### Avoid ORDER BY in Subqueries
+
+ORDER BY in subqueries is usually ignored (optimizer discards it) and wastes planning time. Only the outermost ORDER BY matters, unless using LIMIT/TOP in the subquery.
+
+❌ **Bad (ORDER BY discarded, misleading):**
+```sql
+SELECT *
+FROM (
+    SELECT o.order_id, o.total
+    FROM orders o
+    ORDER BY o.total DESC  -- Ignored! Wasted effort.
+) sub
+WHERE sub.total > 100
+```
+
+✅ **Good (ORDER BY at outermost level):**
+```sql
+SELECT o.order_id, o.total
+FROM orders o
+WHERE o.total > 100
+ORDER BY o.total DESC  -- Correct location
+```
+
+✅ **Exception (ORDER BY meaningful with LIMIT):**
+```sql
+SELECT *
+FROM (
+    SELECT o.order_id, o.total
+    FROM orders o
+    ORDER BY o.total DESC
+    LIMIT 10  -- ORDER BY needed to determine which 10
+) top_orders
+```
+
+### Understand Your Execution Plan
+
+Use EXPLAIN (PostgreSQL/MySQL) or execution plans (SQL Server) to verify query performance. Don't assume—measure.
+
+```sql
+-- PostgreSQL / MySQL
+EXPLAIN ANALYZE
+SELECT ...
+
+-- SQL Server (in SSMS: Ctrl+M for actual plan, Ctrl+L for estimated)
+SET STATISTICS IO ON;
+SET STATISTICS TIME ON;
+```
+
+**What to look for:**
+- **Table scans** on large tables (missing index?)
+- **High row estimates** vs actual (statistics out of date?)
+- **Sort operations** (can an index provide order?)
+- **Nested loops with high iterations** (N+1 problem?)
+
+### Filter Before Grouping: WHERE vs HAVING
+
+WHERE filters rows before grouping (more efficient). HAVING filters after grouping. Use WHERE whenever possible.
+
+✅ **Good (filter before grouping):**
+```sql
+SELECT
+    o.customer_id
+    ,SUM(o.total_amount) AS total_spent
+FROM orders o
+WHERE 1=1
+    AND o.status = 'completed'  -- Filter BEFORE aggregation
+    AND o.created_at >= '2025-01-01'
+GROUP BY
+    o.customer_id
+HAVING SUM(o.total_amount) > 1000  -- Only for conditions on aggregates
+```
+
+❌ **Bad (filtering after grouping - processes more rows):**
+```sql
+SELECT
+    o.customer_id
+    ,o.status
+    ,SUM(o.total_amount) AS total_spent
+FROM orders o
+GROUP BY
+    o.customer_id
+    ,o.status
+HAVING o.status = 'completed'  -- This works but filters AFTER grouping all statuses
+    AND SUM(o.total_amount) > 1000
+-- Problem: Groups ALL orders first, then discards non-completed groups
+-- Better: Filter in WHERE so we only group completed orders
+```
+
+---
+
+## Formatting INSERT, UPDATE, DELETE
+
+The same principles apply to data modification statements.
+
+### INSERT Statements
+
+```sql
+INSERT INTO orders (
+    customer_id
+    ,order_date
+    ,status_id
+    ,total_amount
+    ,created_by
+    ,created_at
+)
+VALUES (
+    12345
+    ,'2025-01-15'
+    ,1
+    ,299.99
+    ,'system'
+    ,CURRENT_TIMESTAMP
+)
+```
+
+For multi-row inserts:
+```sql
+INSERT INTO order_items (
+    order_id
+    ,product_id
+    ,quantity
+    ,unit_price
+)
+VALUES
+    (1001, 501, 2, 29.99)
+    ,(1001, 502, 1, 49.99)
+    ,(1001, 503, 3, 19.99)
+```
+
+### UPDATE Statements
+
+```sql
+UPDATE orders o
+SET
+    o.status_id = 3
+    ,o.shipped_date = CURRENT_DATE
+    ,o.modified_by = 'shipping_service'
+    ,o.modified_at = CURRENT_TIMESTAMP
+WHERE 1=1
+    AND o.order_id = 12345
+    AND o.status_id = 2  -- Safety: only update if in expected state
+```
+
+**Safety practices for UPDATE:**
+- Always include WHERE clause (never update entire table accidentally)
+- Include current-state check to prevent race conditions
+- Consider LIMIT for batch updates
+
+### DELETE Statements
+
+```sql
+DELETE FROM order_items oi
+WHERE 1=1
+    AND oi.order_id = 12345
+    AND oi.deleted_at IS NOT NULL  -- Only delete soft-deleted records
+```
+
+**Safety practices for DELETE:**
+- Always include WHERE clause
+- Consider soft deletes (SET deleted_at = NOW()) over hard deletes
+- Use LIMIT for batch deletes to avoid long-running transactions
+
+### Batched Operations for Large Data Volumes
+
+When performing UPDATE or DELETE operations that affect thousands of rows, use batched processing to avoid:
+- Exhausting database session memory
+- Long-running transactions that block other operations
+- Lock escalation issues
+- Transaction log bloat
+
+**When to use batched operations:**
+- Data backfills affecting 1,000+ rows
+- Mass updates (e.g., normalizing data, adding default values)
+- Large DELETE operations for data cleanup
+- Any operation that might timeout or exhaust resources
+
+**⚠️ CRITICAL**: A single unbounded UPDATE or DELETE can crash production systems.
+
+---
+
+**Batched UPDATE - Self-Excluding WHERE Clause**
+
+The WHERE clause must become false after the update, otherwise you'll reprocess the same rows infinitely.
+
+```sql
+-- MySQL stored procedure example
+-- The WHERE condition (IS NULL) won't match after SET (to non-null)
+
+DROP PROCEDURE IF EXISTS batch_update_defaults;
+
+CREATE PROCEDURE batch_update_defaults()
+BEGIN
+    DECLARE rows_affected INT DEFAULT 1;
+    DECLARE batch_size INT DEFAULT 1000;
+    
+    WHILE rows_affected > 0 DO
+        UPDATE customers
+        SET
+            loyalty_tier = 'standard'      -- After SET, column is NOT NULL
+            ,modified_at = CURRENT_TIMESTAMP
+        WHERE 1=1
+            AND loyalty_tier IS NULL       -- So these rows won't match next iteration
+        LIMIT batch_size;
+        
+        SET rows_affected = ROW_COUNT();
+        COMMIT;
+    END WHILE;
+END;
+
+CALL batch_update_defaults();
+DROP PROCEDURE IF EXISTS batch_update_defaults;
+```
+
+**Batched UPDATE - ID-Based Iteration**
+
+When your UPDATE doesn't naturally exclude processed rows, iterate by ID:
+
+```sql
+DROP PROCEDURE IF EXISTS batch_update_by_id;
+
+CREATE PROCEDURE batch_update_by_id()
+BEGIN
+    DECLARE last_id BIGINT DEFAULT 0;
+    DECLARE rows_affected INT DEFAULT 1;
+    DECLARE batch_size INT DEFAULT 1000;
+    
+    WHILE rows_affected > 0 DO
+        UPDATE orders o
+        SET
+            o.tax_amount = o.subtotal * 0.08
+            ,o.modified_at = CURRENT_TIMESTAMP
+        WHERE 1=1
+            AND o.order_id > last_id
+        ORDER BY o.order_id
+        LIMIT batch_size;
+        
+        SET rows_affected = ROW_COUNT();
+        
+        IF rows_affected > 0 THEN
+            -- Track the highest ID we processed
+            SELECT MAX(order_id) INTO last_id
+            FROM orders
+            WHERE order_id > last_id
+            ORDER BY order_id
+            LIMIT batch_size;
+        END IF;
+        
+        COMMIT;
+    END WHILE;
+END;
+
+CALL batch_update_by_id();
+DROP PROCEDURE IF EXISTS batch_update_by_id;
+```
+
+---
+
+**Batched DELETE - Naturally Self-Excluding**
+
+DELETE is simpler because deleted rows are removed from the table. Each iteration automatically finds the next batch.
+
+```sql
+DROP PROCEDURE IF EXISTS batch_delete_expired;
+
+CREATE PROCEDURE batch_delete_expired()
+BEGIN
+    DECLARE rows_affected INT DEFAULT 1;
+    DECLARE batch_size INT DEFAULT 1000;
+    
+    WHILE rows_affected > 0 DO
+        DELETE FROM session_tokens
+        WHERE 1=1
+            AND expires_at < DATE_SUB(CURRENT_DATE, INTERVAL 90 DAY)
+        LIMIT batch_size;
+        
+        SET rows_affected = ROW_COUNT();
+        COMMIT;
+    END WHILE;
+END;
+
+CALL batch_delete_expired();
+DROP PROCEDURE IF EXISTS batch_delete_expired;
+```
+
+---
+
+**Batched INSERT - Chunking Large Datasets**
+
+For bulk inserts, break into manageable chunks:
+
+```sql
+-- Insert in chunks rather than one massive statement
+-- This example shows the pattern; actual chunking typically done in application code
+
+-- Chunk 1
+INSERT INTO audit_log (event_type, event_data, created_at)
+SELECT 'migration', old_data, CURRENT_TIMESTAMP
+FROM legacy_table
+WHERE id BETWEEN 1 AND 10000;
+COMMIT;
+
+-- Chunk 2
+INSERT INTO audit_log (event_type, event_data, created_at)
+SELECT 'migration', old_data, CURRENT_TIMESTAMP
+FROM legacy_table
+WHERE id BETWEEN 10001 AND 20000;
+COMMIT;
+
+-- Continue for remaining chunks...
+```
+
+---
+
+**Best Practices for Batched Operations:**
+
+| Practice | Reason |
+|----------|--------|
+| Use batch_size of 1,000-5,000 rows | Balance between throughput and resource usage |
+| COMMIT after each batch | Release locks and memory; allows other operations |
+| Use ROW_COUNT() to detect completion | Exit loop when no more rows affected |
+| Index the WHERE clause columns | Each batch query must be fast |
+| For UPDATE: ensure rows won't re-match | Prevent infinite loops |
+| For DELETE: simpler pattern works | Deleted rows naturally excluded |
+| Add progress logging for large jobs | Monitor long-running operations |
+| Run during low-traffic periods | Minimize impact on production |
+| Test on staging with production-like data | Verify performance and correctness |
+
+**Application-Level Batching (Alternative)**
+
+If stored procedures aren't available or preferred, implement batching in application code:
+
+```python
+# Python example with SQLAlchemy
+batch_size = 1000
+offset = 0
+
+while True:
+    result = connection.execute(text("""
+        UPDATE orders
+        SET status = 'archived'
+        WHERE created_at < :cutoff_date
+          AND status = 'completed'
+        LIMIT :batch_size
+    """), {"cutoff_date": cutoff_date, "batch_size": batch_size})
+    
+    connection.commit()
+    
+    if result.rowcount == 0:
+        break
+    
+    logger.info(f"Updated {result.rowcount} rows")
+```
+
+---
+
+## Comments & Documentation
+
+Add comments for complex logic, business rules, or non-obvious conditions.
+
+```sql
+SELECT
+    l.loan_id
+    ,l.principal_amount
+    ,l.interest_rate
+    -- Calculate days past due: difference between today and due date
+    ,DATEDIFF(CURRENT_DATE, l.due_date) AS days_past_due
+FROM loans l
+WHERE 1=1
+    AND l.status_id = 2  -- 2 = 'active' in loan_status lookup
+    -- Only loans past due by more than 30 days per policy DOC-1234
+    AND DATEDIFF(CURRENT_DATE, l.due_date) > 30
+    -- Exclude loans in grace period (business rule: first 5 days)
+    AND l.grace_period_end < CURRENT_DATE
+```
+
+---
+
+## Quick Reference Checklist
+
+Before submitting a query, verify:
+
+- [ ] **SELECT**: Each column on its own line with leading commas
+- [ ] **SELECT**: No `SELECT *` - all columns explicitly listed
+- [ ] **SELECT**: No unnecessary DISTINCT (fix the join instead)
+- [ ] **SELECT**: No scalar subqueries (use JOINs or window functions)
+- [ ] **FROM/JOIN**: Table aliases used and applied to all columns
+- [ ] **JOIN**: Explicit JOIN syntax (not comma-separated tables)
+- [ ] **JOIN**: CROSS APPLY/LATERAL considered for TOP N per group
+- [ ] **WHERE**: Starts with `WHERE 1=1`
+- [ ] **WHERE**: Each condition on its own line starting with `AND`
+- [ ] **WHERE**: No functions on indexed columns
+- [ ] **WHERE**: No leading wildcards in LIKE
+- [ ] **WHERE**: No implicit type conversions (match column types)
+- [ ] **WHERE**: OR conditions minimized or rewritten
+- [ ] **WHERE**: NULL handling is explicit (IS NULL, not = NULL)
+- [ ] **WHERE**: NOT EXISTS used instead of NOT IN (NULL-safe)
+- [ ] **WHERE**: Date ranges use >= and < (not BETWEEN for datetimes)
+- [ ] **WHERE**: Conditions can leverage existing indexes (column order)
+- [ ] **WHERE**: Negative conditions (!=, NOT) reviewed for index impact
+- [ ] **GROUP BY**: Filtering done in WHERE, not HAVING (when possible)
+- [ ] **ORDER BY**: Only at outermost query (unless LIMIT in subquery)
+- [ ] **Pagination**: Keyset pagination for large datasets (not OFFSET)
+- [ ] **Keywords**: All SQL keywords in UPPERCASE
+- [ ] **Security**: User input via parameters, never string concatenation
+- [ ] **Security**: No dynamic SQL; if unavoidable, whitelist validation required
+- [ ] **Batching**: Large UPDATE/DELETE operations chunked (1,000+ rows)
+- [ ] **Performance**: Most selective conditions listed first
+- [ ] **Performance**: EXPLAIN reviewed for table scans on large tables
+- [ ] **Readability**: Complex logic has comments
+
+---
+
+## Complete Example
+
+```sql
+-- Get high-value customers with recent orders
+-- Business requirement: JIRA-4521
+WITH recent_orders AS (
+    SELECT
+        o.customer_id
+        ,COUNT(o.order_id) AS order_count
+        ,SUM(o.total_amount) AS total_spent
+        ,MAX(o.order_date) AS last_order_date
+    FROM orders o
+    WHERE 1=1
+        AND o.status_id = 3  -- 3 = 'completed' in order_status lookup
+        AND o.order_date >= DATE_SUB(CURRENT_DATE, INTERVAL 90 DAY)
+    GROUP BY
+        o.customer_id
+    HAVING SUM(o.total_amount) >= 1000
+)
+SELECT
+    c.customer_id
+    ,c.first_name
+    ,c.last_name
+    ,c.email
+    ,c.customer_tier_id
+    ,ro.order_count
+    ,ro.total_spent
+    ,ro.last_order_date
+FROM customers c
+INNER JOIN recent_orders ro ON ro.customer_id = c.customer_id
+WHERE 1=1
+    AND c.status_id = 1  -- 1 = 'active' in customer_status lookup
+    AND c.email_verified = 1
+ORDER BY
+    ro.total_spent DESC
+    ,c.last_name ASC
+LIMIT 100
+```
+
+---
+
+## Database-Specific Syntax Notes
+
+This guide uses ANSI SQL where possible, but some syntax varies by database:
+
+| Feature | MySQL | PostgreSQL | SQL Server |
+|---------|-------|------------|------------|
+| Limit rows | `LIMIT n` | `LIMIT n` | `TOP n` or `OFFSET...FETCH` |
+| String concat | `CONCAT()` | `||` operator | `+` operator |
+| Current time | `CURRENT_TIMESTAMP` | `CURRENT_TIMESTAMP` | `GETDATE()` |
+| Auto-increment | `AUTO_INCREMENT` | `SERIAL` / `GENERATED` | `IDENTITY` |
+| Upsert | `ON DUPLICATE KEY UPDATE` | `ON CONFLICT DO UPDATE` | `MERGE` |
+| Lateral join | `CROSS JOIN LATERAL` | `CROSS JOIN LATERAL` | `CROSS APPLY` |
+| Bool literals | `TRUE` / `FALSE` / `1` / `0` | `TRUE` / `FALSE` | `1` / `0` |
+| Case sensitivity | Usually case-insensitive | Case-sensitive | Collation-dependent |
+| Identifier quoting | \`backticks\` | "double quotes" | [brackets] or "double quotes" |
+
+**Always verify syntax against your specific database version.** When in doubt, consult official documentation.
+
+---
+
+## Usage Notes
+
+This skill applies to:
+- Writing new SQL queries (SELECT, INSERT, UPDATE, DELETE)
+- Reviewing existing SQL queries for style and performance
+- Optimizing slow queries
+- Maintaining query codebases
+- Code reviews involving database access
+
+**Key principles:**
+- **Readability**: Leading commas, WHERE 1=1, consistent formatting
+- **Maintainability**: Easy to comment out, add, or remove lines
+- **Performance**: Index-aware queries, avoiding common pitfalls
+- **Correctness**: NULL handling, type matching, boundary conditions
+- **Security**: Parameterized queries to prevent SQL injection
+
+The formatting conventions prioritize **developer experience**—the ability to quickly modify queries during development and debugging without introducing syntax errors. The performance guidelines ensure queries execute efficiently and make good use of database indexes.
+

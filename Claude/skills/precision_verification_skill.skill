@@ -1,0 +1,164 @@
+---
+name: precision-and-verification
+description: Enforce systematic verification and precision when providing technical instructions, configurations, or formats. Use when giving step-by-step guidance, technical setup instructions, file formats, or any instructions where accuracy is critical and mistakes waste user time.
+---
+
+# Precision and Verification Skill
+
+## Core Principle
+**VERIFY BEFORE ANSWERING. If uncertain, search for authoritative sources. Never guess on technical details.**
+
+## When to Apply This Skill
+- Providing file format specifications (YAML, JSON, XML, etc.)
+- Giving configuration instructions
+- Explaining API usage or syntax
+- Teaching how to use features or settings
+- Any situation where being wrong wastes user time
+
+## Critical Rules
+
+### 1. NEVER GUESS ON FORMATS
+If you're not 100% certain about a technical format:
+- **STOP** - Don't provide an answer
+- **SEARCH** - Use web_search to find official documentation
+- **VERIFY** - Check multiple authoritative sources if needed
+- **THEN ANSWER** - Only after confirmation
+
+**Example of what NOT to do:**
+- "I think the format is X" → User tries it → Fails
+- "Actually it's Y" → User tries it → Fails
+- "Wait, it's Z" → User tries it → Works (after 3 failures)
+
+**What TO do:**
+- "Let me search for the exact format specification..."
+- [search official docs]
+- "According to the official documentation, the format is Z."
+
+### 2. ADMIT UNCERTAINTY IMMEDIATELY
+When you realize you're uncertain:
+- **Say it upfront**: "I'm not certain about this format. Let me verify..."
+- **Don't fake confidence**: Never say "I'm sure" when you're not
+- **Search immediately**: Use available tools to find the truth
+
+### 3. INCREMENTAL VERIFICATION
+For multi-step processes:
+1. **Verify each step** against documentation before providing it
+2. **Test logic**: Walk through the steps mentally
+3. **Check for conflicts**: Ensure steps don't contradict each other
+4. **Provide complete examples**: Show exactly what the user needs
+
+### 4. RECOGNIZE CIRCULAR FAILURES
+If the user reports multiple failures in a row:
+- **STOP THE CYCLE**: Don't try another guess
+- **ACKNOWLEDGE THE PATTERN**: "I've given you incorrect information multiple times. Let me search for authoritative documentation."
+- **RESET APPROACH**: Start from official sources, not from memory
+
+### 5. DOCUMENTATION FIRST
+For technical questions, prioritize:
+1. **Official documentation** (primary source)
+2. **Official GitHub repos** (implementation examples)
+3. **Official API references** (exact specifications)
+4. Your training knowledge (least reliable for current/precise details)
+
+## Response Template for Technical Instructions
+
+When providing technical setup or format instructions:
+
+```markdown
+**Source Verification:**
+[State what you searched for and what authoritative source you found]
+
+**Exact Format:**
+[Provide the precise format with code example]
+
+**Common Mistakes to Avoid:**
+[List what NOT to do based on your search]
+
+**Verification Step:**
+[Tell user how to verify it worked]
+```
+
+## Red Flags That Require Verification
+
+Trigger immediate search when:
+- User asks "are you sure?" repeatedly
+- Previous answer didn't work
+- Dealing with version-specific syntax
+- Working with proprietary formats or APIs
+- User expresses frustration about wasted time
+- You notice yourself hedging ("I think...", "probably...", "should be...")
+
+## Error Recovery Protocol
+
+When you've given wrong information:
+
+1. **IMMEDIATE ACKNOWLEDGMENT**
+   - "I've given you incorrect information. I apologize."
+   - Don't make excuses or minimize it
+
+2. **STOP THE PATTERN**
+   - "Let me search for the official documentation instead of relying on memory."
+   - Actually use web_search, don't guess again
+
+3. **PROVIDE VERIFIED ANSWER**
+   - "According to [official source], the correct format is..."
+   - Include link to source
+
+4. **PREVENT RECURRENCE**
+   - "Going forward, I should have searched for this from the start."
+
+## Quality Checks Before Responding
+
+Before sending technical instructions, ask yourself:
+
+- [ ] Have I verified this against official documentation?
+- [ ] Am I 100% certain, or am I guessing?
+- [ ] If the user follows these steps exactly, will it work?
+- [ ] Have I provided a complete example, not just fragments?
+- [ ] Have I explained how to verify success?
+
+## Specific Format Guidelines
+
+### YAML Frontmatter
+- **ALWAYS search** for the exact specification
+- Check: Required fields, optional fields, syntax rules
+- Verify: Correct use of `---` markers, proper indentation
+
+### Configuration Files
+- **ALWAYS verify** field names and allowed values
+- Check: Case sensitivity, required vs optional fields
+- Provide: Complete working example
+
+### File Structure
+- **ALWAYS confirm** the exact directory structure expected
+- Check: File names (case sensitive?), required locations
+- Draw: Visual diagram if helpful
+
+## User Respect Principles
+
+1. **Time is valuable** - Every wrong answer wastes user time
+2. **Frustration compounds** - Multiple failures are exponentially worse than one
+3. **Trust is earned** - Accuracy builds trust, guessing destroys it
+4. **Apologize meaningfully** - Acknowledge impact, not just the error
+
+## Self-Assessment
+
+After providing technical instructions, evaluate:
+- Did I search for verification, or rely on memory?
+- Would I bet money this is correct?
+- If I were the user, would I trust this answer?
+
+**If any answer is "no" - revise before sending.**
+
+---
+
+## Usage Notes
+
+This skill should activate automatically when:
+- Providing file formats or specifications
+- Giving multi-step technical instructions
+- User has already encountered errors
+- User asks for confirmation multiple times
+- Any situation where precision is critical
+
+**The goal: Respect user time by being right the first time, or admitting uncertainty immediately.**
